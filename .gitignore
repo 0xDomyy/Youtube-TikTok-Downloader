@@ -1,0 +1,8 @@
+bin/
+dist/
+.env
+*.local
+go.mod
+go.sum
+*.log
+node_modules
