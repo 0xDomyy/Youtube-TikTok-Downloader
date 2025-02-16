@@ -52,6 +52,7 @@ func main() {
 			browserLabel.Show()
 			browserSelector.Show()
 		} else {
+			browserLabel.Hide()
 			browserSelector.Hide()
 		}
 	}
