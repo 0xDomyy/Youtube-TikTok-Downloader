@@ -14,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -21,9 +22,15 @@ func main() {
 	myApp := app.New()
 	window := myApp.NewWindow("Video Downloader")
 
+	window.SetIcon(theme.FyneLogo())
+
 	title := canvas.NewText("Video Downloader v1.0", color.White)
 	title.Alignment = fyne.TextAlignCenter
 	title.TextStyle = fyne.TextStyle{Bold: true}
+
+	text := canvas.NewText("Developed by @domyy.krnl", color.White)
+	text.Alignment = fyne.TextAlignCenter
+	text.TextStyle = fyne.TextStyle{Italic: true}
 
 	platforms := []string{"YouTube", "TikTok"}
 	platformSelector := widget.NewSelect(platforms, nil)
@@ -86,6 +93,7 @@ func main() {
 
 	content := container.NewVBox(
 		title,
+		text,
 		platformLabel,
 		platformSelector,
 		urlEntry,
@@ -112,42 +120,43 @@ func downloadVideo(url, platform, browser string, progressBar *widget.ProgressBa
 		return fmt.Errorf("Invalid platform selected")
 	}
 
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stdout pipe: %v", err)
-	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("failed to get stderr pipe: %v", err)
+		return fmt.Errorf("Error creating stderr pipe: %v", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start yt-dlp: %v", err)
+		return fmt.Errorf("Error starting yt-dlp: %v", err)
 	}
 
-	progressRegex := regexp.MustCompile(`\[\s*download\s*\]\s*([\d.]+)%`)
-
-	scanner := bufio.NewScanner(stdoutPipe)
 	go func() {
+		scanner := bufio.NewScanner(stderrPipe)
+		progressRegex := regexp.MustCompile(`(\d+\.\d+)%`)
+
 		for scanner.Scan() {
 			line := scanner.Text()
 			match := progressRegex.FindStringSubmatch(line)
 			if len(match) > 1 {
-				progress := match[1]
 				var percent float64
-				fmt.Sscanf(progress, "%f", &percent)
+				fmt.Sscanf(match[1], "%f", &percent)
+
 				progressBar.SetValue(percent / 100)
 			}
 		}
 	}()
 
+	// Aspetta che il comando finisca
+	err = cmd.Wait()
+	progressBar.SetValue(1.0) // Completa la progress bar al 100%
+
+	// Gestisci eventuali errori
 	var stderrBuffer bytes.Buffer
 	scannerErr := bufio.NewScanner(stderrPipe)
 	for scannerErr.Scan() {
 		stderrBuffer.WriteString(scannerErr.Text() + "\n")
 	}
 
-	if err := cmd.Wait(); err != nil {
+	if err != nil {
 		return fmt.Errorf("yt-dlp error: %v\n%s", err, stderrBuffer.String())
 	}
 
