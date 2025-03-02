@@ -2,11 +2,11 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"image/color"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -21,7 +21,6 @@ import (
 func main() {
 	myApp := app.New()
 	window := myApp.NewWindow("Video Downloader")
-
 	window.SetIcon(theme.FyneLogo())
 
 	title := canvas.NewText("Video Downloader v1.0", color.White)
@@ -47,7 +46,6 @@ func main() {
 	browsers := []string{"Firefox", "Chrome", "Edge", "Vivaldi", "Brave", "Opera", "Safari", "Chromium", "Whale"}
 	browserSelector := widget.NewSelect(browsers, nil)
 	browserSelector.SetSelected("Firefox")
-
 	browserSelector.Hide()
 
 	platformLabel := widget.NewLabel("Select Platform:")
@@ -78,15 +76,13 @@ func main() {
 		progressBar.Show()
 
 		go func() {
-			err := downloadVideo(url, platform, browser, progressBar, outputLabel)
-			progressBar.Hide()
-
+			err := downloadVideo(url, platform, browser, progressBar, outputLabel, window)
+			// Final UI updates need to happen on the main thread
+			window.Canvas().Refresh(progressBar)
 			if err != nil {
 				outputLabel.SetText(fmt.Sprintf("Error: %v", err))
 			} else {
 				outputLabel.SetText("Download complete!")
-
-				dialog.ShowInformation("Download Complete", "The video has been downloaded successfully!", window)
 			}
 		}()
 	})
@@ -109,55 +105,74 @@ func main() {
 	window.ShowAndRun()
 }
 
-func downloadVideo(url, platform, browser string, progressBar *widget.ProgressBar, outputLabel *widget.Label) error {
+func downloadVideo(url, platform, browser string, progressBar *widget.ProgressBar, outputLabel *widget.Label, window fyne.Window) error {
 	var cmd *exec.Cmd
 
 	if platform == "YouTube" {
-		cmd = exec.Command("yt-dlp", "--progress", "-o", "%(title)s.%(ext)s", url)
+		cmd = exec.Command("yt-dlp", "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4", "--merge-output-format", "mp4", "--progress", "-o", "%(title)s.%(ext)s", url)
 	} else if platform == "TikTok" {
-		cmd = exec.Command("yt-dlp", "--progress", "-o", "%(title)s.%(ext)s", "--cookies-from-browser", browser, url)
+		cmd = exec.Command("yt-dlp", "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4", "--merge-output-format", "mp4", "--progress", "-o", "%(title)s.%(ext)s", "--cookies-from-browser", browser, url)
 	} else {
-		return fmt.Errorf("Invalid platform selected")
+		return fmt.Errorf("invalid platform selected")
 	}
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("Error creating stderr pipe: %v", err)
+		return fmt.Errorf("error creating stderr pipe: %v", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("Error starting yt-dlp: %v", err)
+		return fmt.Errorf("error starting yt-dlp: %v", err)
 	}
 
-	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		progressRegex := regexp.MustCompile(`(\d+\.\d+)%`)
+	scanner := bufio.NewScanner(stderrPipe)
 
+	progressRegex := regexp.MustCompile(`(\d+\.\d+)%`)
+
+	updateChan := make(chan func(), 100)
+
+	go func() {
+		for update := range updateChan {
+			window.Canvas().Refresh(progressBar)
+			update()
+		}
+	}()
+
+	go func() {
 		for scanner.Scan() {
 			line := scanner.Text()
+
+			finalLine := line
+			updateChan <- func() {
+				outputLabel.SetText(finalLine)
+			}
+
 			match := progressRegex.FindStringSubmatch(line)
 			if len(match) > 1 {
-				var percent float64
-				fmt.Sscanf(match[1], "%f", &percent)
-
-				progressBar.SetValue(percent / 100)
+				percent, err := strconv.ParseFloat(match[1], 64)
+				if err == nil {
+					updateChan <- func() {
+						progressBar.SetValue(percent / 100.0)
+					}
+				}
 			}
 		}
 	}()
 
-	// Aspetta che il comando finisca
 	err = cmd.Wait()
-	progressBar.SetValue(1.0) // Completa la progress bar al 100%
 
-	// Gestisci eventuali errori
-	var stderrBuffer bytes.Buffer
-	scannerErr := bufio.NewScanner(stderrPipe)
-	for scannerErr.Scan() {
-		stderrBuffer.WriteString(scannerErr.Text() + "\n")
+	updateChan <- func() {
+		progressBar.SetValue(1.0)
+
+		if err == nil {
+			dialog.ShowInformation("Download Complete", "The video has been downloaded successfully!", window)
+		}
 	}
 
+	close(updateChan)
+
 	if err != nil {
-		return fmt.Errorf("yt-dlp error: %v\n%s", err, stderrBuffer.String())
+		return fmt.Errorf("yt-dlp error: %v", err)
 	}
 
 	return nil
