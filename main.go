@@ -77,7 +77,7 @@ func main() {
 
 		go func() {
 			err := downloadVideo(url, platform, browser, progressBar, outputLabel, window)
-			// Final UI updates need to happen on the main thread
+			
 			window.Canvas().Refresh(progressBar)
 			if err != nil {
 				outputLabel.SetText(fmt.Sprintf("Error: %v", err))
